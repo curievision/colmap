@@ -72,6 +72,7 @@ class Model:
 
     def add_cameras(self, scale=1):
         frames = []
+        first = True
         for img in self.images.values():
             # rotation
             R = qvec2rotmat(img.qvec)
@@ -111,7 +112,9 @@ class Model:
             K[1, 2] = cy
 
             # create axis, plane and pyramed geometries that will be drawn
-            cam_model = draw_camera(K, R, t, cam.width, cam.height, scale)
+            color = [0.8, 0.2, 0.8] if first else [1.0, 0.0, 0.0]
+            cam_model = draw_camera(K, R, t, cam.width, cam.height, scale, color)
+            first = False
             frames.extend(cam_model)
 
         # add geometries to visualizer
@@ -121,6 +124,13 @@ class Model:
     def create_window(self):
         self.__vis = open3d.visualization.Visualizer()
         self.__vis.create_window()
+
+    def add_origin_axes(self, size=10.0):
+        """Add a large set of axes at the origin."""
+        origin_axes = open3d.geometry.TriangleMesh.create_coordinate_frame(size=size)
+        self.__vis.add_geometry(origin_axes)
+        self.__vis.poll_events()
+        self.__vis.update_renderer()
 
     def show(self):
         self.__vis.poll_events()
@@ -190,8 +200,31 @@ def draw_camera(K, R, t, w, h, scale=1, color=[0.8, 0.2, 0.8]):
     )
     line_set.colors = open3d.utility.Vector3dVector(colors)
 
+    # Direction line
+    # Assuming the camera is facing along the negative Z-axis of its local coordinate system
+    direction_vector = R @ np.array([0, 0, 5])
+    direction_points = [t, t + direction_vector]  # Starting from the camera's position
+    direction_lines = [[0, 1]]
+    direction_line_set = open3d.geometry.LineSet(
+        points=open3d.utility.Vector3dVector(direction_points),
+        lines=open3d.utility.Vector2iVector(direction_lines),
+    )
+    direction_line_set.colors = open3d.utility.Vector3dVector([color])  # Use the same color for the direction line
+
+    # direction_vector2 = R @ np.array([0, 0, -5])
+    # direction_points2 = [t, t + direction_vector2]  # Starting from the camera's position
+    # direction_lines2 = [[0, 1]]
+    # direction_line_set2 = open3d.geometry.LineSet(
+    #     points=open3d.utility.Vector3dVector(direction_points2),
+    #     lines=open3d.utility.Vector2iVector(direction_lines2),
+    # )
+    # direction_line_set2.colors = open3d.utility.Vector3dVector([color])  # Use the same color for the direction line
+
+
     # return as list in Open3D format
-    return [axis, plane, line_set]
+    return [axis, plane, line_set, direction_line_set]
+
+
 
 
 def parse_args():
@@ -226,6 +259,8 @@ def main():
     model.create_window()
     model.add_points()
     model.add_cameras(scale=0.25)
+    model.add_origin_axes(size=1.0)  # Add this line to add the origin axes
+ 
     model.show()
 
 
