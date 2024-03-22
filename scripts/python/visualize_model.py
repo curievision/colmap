@@ -138,6 +138,21 @@ class Model:
         self.__vis.run()
         self.__vis.destroy_window()
 
+    def load_geometry(self, file_path):
+        if file_path.endswith(".ply"):
+            geometry = open3d.io.read_triangle_mesh(file_path)
+        elif file_path.endswith(".obj"):
+            geometry = open3d.io.read_triangle_mesh(file_path)
+        else:
+            raise ValueError("Unsupported file format. Only PLY and OBJ are supported.")
+
+        if not geometry.has_vertex_normals():
+            geometry.compute_vertex_normals()
+
+        self.__vis.add_geometry(geometry)
+        self.__vis.poll_events()
+        self.__vis.update_renderer()
+
 
 def draw_camera(K, R, t, w, h, scale=1, color=[0.8, 0.2, 0.8]):
     """Create axis, plane and pyramed geometries in Open3D format.
@@ -240,6 +255,10 @@ def parse_args():
         help="input model format",
         default="",
     )
+    parser.add_argument(
+        "--geometry_file",
+        help="path to the PLY or OBJ file to visualize",
+    )
     args = parser.parse_args()
     return args
 
@@ -259,8 +278,12 @@ def main():
     model.create_window()
     model.add_points()
     model.add_cameras(scale=0.25)
-    model.add_origin_axes(size=1.0)  # Add this line to add the origin axes
- 
+    model.add_origin_axes(size=1.0)
+
+    # load and display geometry file (PLY or OBJ)
+    if args.geometry_file:
+        model.load_geometry(args.geometry_file)
+
     model.show()
 
 
