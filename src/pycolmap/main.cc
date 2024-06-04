@@ -1,23 +1,19 @@
 #include "colmap/math/random.h"
 #include "colmap/util/version.h"
 
-#include "pycolmap/estimators/bindings.h"
-#include "pycolmap/feature/sift.h"
-#include "pycolmap/geometry/bindings.h"
 #include "pycolmap/helpers.h"
-#include "pycolmap/optim/bindings.h"
-#include "pycolmap/pipeline/bindings.h"
+#include "pycolmap/logging.h"
 #include "pycolmap/pybind11_extension.h"
-#include "pycolmap/scene/bindings.h"
-#include "pycolmap/sfm/bindings.h"
+#include "pycolmap/timer.h"
 #include "pycolmap/utils.h"
 
-#include <glog/logging.h>
+#include <ceres/version.h>
+#include <pybind11/iostream.h>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
-namespace py = pybind11;
 using namespace colmap;
+namespace py = pybind11;
 
 struct Logging {
   // TODO: Replace with google::LogSeverity in glog >= v0.7.0
@@ -109,6 +105,14 @@ void BindLogging(py::module& m) {
   FLAGS_alsologtostderr = true;
 }
 
+void BindEstimators(py::module& m);
+void BindGeometry(py::module& m);
+void BindOptim(py::module& m);
+void BindPipeline(py::module& m);
+void BindScene(py::module& m);
+void BindSfMObjects(py::module& m);
+void BindSift(py::module& m);
+
 PYBIND11_MODULE(pycolmap, m) {
   m.doc() = "COLMAP plugin";
 #ifdef VERSION_INFO
@@ -116,6 +120,7 @@ PYBIND11_MODULE(pycolmap, m) {
 #else
   m.attr("__version__") = py::str("dev");
 #endif
+  m.attr("__ceres_version__") = py::str(CERES_VERSION_STRING);
   m.attr("has_cuda") = IsGPU(Device::AUTO);
   m.attr("COLMAP_version") = py::str(GetVersionInfo());
   m.attr("COLMAP_build") = py::str(GetBuildInfo());
@@ -127,6 +132,7 @@ PYBIND11_MODULE(pycolmap, m) {
   AddStringToEnumConstructor(PyDevice);
 
   BindLogging(m);
+  BindTimer(m);
   BindGeometry(m);
   BindOptim(m);
   BindScene(m);
