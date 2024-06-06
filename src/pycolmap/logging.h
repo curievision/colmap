@@ -75,7 +75,9 @@ void BindLogging(py::module& m) {
         const auto frame = GetPythonCallFrame();
         google::LogMessageFatal(frame.first.c_str(), frame.second).stream()
             << msg;
-      });
+      }).def_static("flush_log_files", []() {
+        google::FlushLogFiles(google::INFO);
+      });;
   py::enum_<Logging::LogSeverity>(PyLogging, "Level")
       .value("INFO", Logging::LogSeverity::GLOG_INFO)
       .value("WARNING", Logging::LogSeverity::GLOG_WARNING)
