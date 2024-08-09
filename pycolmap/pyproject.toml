@@ -2,6 +2,13 @@
 requires = ["scikit-build-core>=0.3.3", "pybind11==2.12.0"]
 build-backend = "scikit_build_core.build"
 
+# Fixes OpenMP detection on Linux, see
+# https://github.com/colmap/colmap/issues/2679 for details
+[tool.scikit-build.cmake]
+args=["-DBLAS_LIBRARIES=/usr/lib/x86_64-linux-gnu/blas/libblas.so", "-DLAPACK_LIBRARIES=/usr/lib/x86_64-linux-gnu/lapack/liblapack.so",
+      "-DOpenMP_C_FLAGS=-fopenmp", "-DOpenMP_C_LIB_NAMES=gomp",
+      "-DOpenMP_gomp_LIBRARY=/usr/lib/gcc/x86_64-linux-gnu/9/libgomp.so",
+      "-DOpenMP_CXX_FLAGS=-fopenmp", "-DOpenMP_CXX_LIB_NAMES=gomp"]
 
 [project]
 name = "pycolmap"
