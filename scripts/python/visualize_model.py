@@ -29,9 +29,53 @@
 
 import argparse
 import numpy as np
-import open3d
+import open3d as o3d
+import open3d.visualization.gui as gui
+from open3d.visualization.gui import Label3D
 
 from read_write_model import read_model, write_model, qvec2rotmat, rotmat2qvec
+
+
+def draw_camera(K, R, t, w, h, scale=1, color=[0.8, 0.2, 0.8]):
+    """Create axis, plane and pyramid geometries in Open3D format."""
+    K = K.copy() / scale
+    Kinv = np.linalg.inv(K)
+
+    T = np.column_stack((R, t))
+    T = np.vstack((T, (0, 0, 0, 1)))
+
+    axis = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.5 * scale)
+    axis.transform(T)
+
+    points_pixel = [[0, 0, 0], [0, 0, 1], [w, 0, 1], [0, h, 1], [w, h, 1]]
+    points = [Kinv @ p for p in points_pixel]
+
+    width = abs(points[1][0]) + abs(points[3][0])
+    height = abs(points[1][1]) + abs(points[3][1])
+    plane = o3d.geometry.TriangleMesh.create_box(width, height, depth=1e-6)
+    plane.paint_uniform_color(color)
+    plane.translate([points[1][0], points[1][1], scale])
+    plane.transform(T)
+
+    points_in_world = [(R @ p + t) for p in points]
+    lines = [[0, 1], [0, 2], [0, 3], [0, 4]]
+    colors = [color for _ in range(len(lines))]
+    line_set = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(points_in_world),
+        lines=o3d.utility.Vector2iVector(lines),
+    )
+    line_set.colors = o3d.utility.Vector3dVector(colors)
+
+    direction_vector = R @ np.array([0, 0, 5])
+    direction_points = [t, t + direction_vector]
+    direction_lines = [[0, 1]]
+    direction_line_set = o3d.geometry.LineSet(
+        points=o3d.utility.Vector3dVector(direction_points),
+        lines=o3d.utility.Vector2iVector(direction_lines),
+    )
+    direction_line_set.colors = o3d.utility.Vector3dVector([color])
+
+    return [axis, plane, line_set, direction_line_set]
 
 
 class Model:
@@ -45,7 +89,7 @@ class Model:
         self.cameras, self.images, self.points3D = read_model(path, ext)
 
     def add_points(self, min_track_len=3, remove_statistical_outlier=True):
-        pcd = open3d.geometry.PointCloud()
+        pcd = o3d.geometry.PointCloud()
 
         xyz = []
         rgb = []
@@ -56,217 +100,74 @@ class Model:
             xyz.append(point3D.xyz)
             rgb.append(point3D.rgb / 255)
 
-        pcd.points = open3d.utility.Vector3dVector(xyz)
-        pcd.colors = open3d.utility.Vector3dVector(rgb)
+        pcd.points = o3d.utility.Vector3dVector(xyz)
+        pcd.colors = o3d.utility.Vector3dVector(rgb)
 
-        # remove obvious outliers
         if remove_statistical_outlier:
-            [pcd, _] = pcd.remove_statistical_outlier(
-                nb_neighbors=20, std_ratio=2.0
-            )
+            [pcd, _] = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
 
-        # open3d.visualization.draw_geometries([pcd])
-        self.__vis.add_geometry(pcd)
-        self.__vis.poll_events()
-        self.__vis.update_renderer()
+        self.__vis.add_geometry("points", pcd)
 
     def add_cameras(self, scale=1):
-        frames = []
-        first = True
-        for img in self.images.values():
-            # rotation
+        for idx, (image_id, img) in enumerate(self.images.items()):
             R = qvec2rotmat(img.qvec)
-
-            # translation
             t = img.tvec
-
-            # invert
             t = -R.T @ t
             R = R.T
 
-            # intrinsics
             cam = self.cameras[img.camera_id]
-
             if cam.model in ("SIMPLE_PINHOLE", "SIMPLE_RADIAL", "RADIAL"):
                 fx = fy = cam.params[0]
-                cx = cam.params[1]
-                cy = cam.params[2]
-            elif cam.model in (
-                "PINHOLE",
-                "OPENCV",
-                "OPENCV_FISHEYE",
-                "FULL_OPENCV",
-            ):
-                fx = cam.params[0]
-                fy = cam.params[1]
-                cx = cam.params[2]
-                cy = cam.params[3]
+                cx, cy = cam.params[1], cam.params[2]
+            elif cam.model in ("PINHOLE", "OPENCV", "OPENCV_FISHEYE", "FULL_OPENCV"):
+                fx, fy = cam.params[0], cam.params[1]
+                cx, cy = cam.params[2], cam.params[3]
             else:
                 raise Exception("Camera model not supported")
 
-            # intrinsics
-            K = np.identity(3)
-            K[0, 0] = fx
-            K[1, 1] = fy
-            K[0, 2] = cx
-            K[1, 2] = cy
+            K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
 
-            # create axis, plane and pyramed geometries that will be drawn
-            color = [0.8, 0.2, 0.8] if first else [1.0, 0.0, 0.0]
+            color = [0.8, 0.2, 0.8] if idx == 0 else [1.0, 0.0, 0.0]
             cam_model = draw_camera(K, R, t, cam.width, cam.height, scale, color)
-            first = False
-            frames.extend(cam_model)
+            
+            for i, geom in enumerate(cam_model):
+                self.__vis.add_geometry(f"camera_{idx}_{i}", geom)
 
-        # add geometries to visualizer
-        for i in frames:
-            self.__vis.add_geometry(i)
+            self.__vis.add_3d_label(t, f"Cam {idx+1}")
 
     def create_window(self):
-        self.__vis = open3d.visualization.Visualizer()
-        self.__vis.create_window()
-
-    def add_origin_axes(self, size=10.0):
-        """Add a large set of axes at the origin."""
-        origin_axes = open3d.geometry.TriangleMesh.create_coordinate_frame(size=size)
-        self.__vis.add_geometry(origin_axes)
-        self.__vis.poll_events()
-        self.__vis.update_renderer()
+        gui.Application.instance.initialize()
+        self.__vis = o3d.visualization.O3DVisualizer("COLMAP Model Viewer", 1024, 768)
+        gui.Application.instance.add_window(self.__vis)
 
     def show(self):
-        self.__vis.poll_events()
-        self.__vis.update_renderer()
-        self.__vis.run()
-        self.__vis.destroy_window()
+        self.__vis.reset_camera_to_default()
+        self.__vis.show_settings = True
 
     def load_geometry(self, file_path):
         if file_path.endswith(".ply"):
-            geometry = open3d.io.read_triangle_mesh(file_path)
+            geometry = o3d.io.read_triangle_mesh(file_path)
         elif file_path.endswith(".obj"):
-            geometry = open3d.io.read_triangle_mesh(file_path)
+            geometry = o3d.io.read_triangle_mesh(file_path)
         else:
             raise ValueError("Unsupported file format. Only PLY and OBJ are supported.")
 
         if not geometry.has_vertex_normals():
             geometry.compute_vertex_normals()
 
-        self.__vis.add_geometry(geometry)
-        self.__vis.poll_events()
-        self.__vis.update_renderer()
-
-
-def draw_camera(K, R, t, w, h, scale=1, color=[0.8, 0.2, 0.8]):
-    """Create axis, plane and pyramed geometries in Open3D format.
-    :param K: calibration matrix (camera intrinsics)
-    :param R: rotation matrix
-    :param t: translation
-    :param w: image width
-    :param h: image height
-    :param scale: camera model scale
-    :param color: color of the image plane and pyramid lines
-    :return: camera model geometries (axis, plane and pyramid)
-    """
-
-    # intrinsics
-    K = K.copy() / scale
-    Kinv = np.linalg.inv(K)
-
-    # 4x4 transformation
-    T = np.column_stack((R, t))
-    T = np.vstack((T, (0, 0, 0, 1)))
-
-    # axis
-    axis = open3d.geometry.TriangleMesh.create_coordinate_frame(
-        size=0.5 * scale
-    )
-    axis.transform(T)
-
-    # points in pixel
-    points_pixel = [
-        [0, 0, 0],
-        [0, 0, 1],
-        [w, 0, 1],
-        [0, h, 1],
-        [w, h, 1],
-    ]
-
-    # pixel to camera coordinate system
-    points = [Kinv @ p for p in points_pixel]
-
-    # image plane
-    width = abs(points[1][0]) + abs(points[3][0])
-    height = abs(points[1][1]) + abs(points[3][1])
-    plane = open3d.geometry.TriangleMesh.create_box(width, height, depth=1e-6)
-    plane.paint_uniform_color(color)
-    plane.translate([points[1][0], points[1][1], scale])
-    plane.transform(T)
-
-    # pyramid
-    points_in_world = [(R @ p + t) for p in points]
-    lines = [
-        [0, 1],
-        [0, 2],
-        [0, 3],
-        [0, 4],
-    ]
-    colors = [color for i in range(len(lines))]
-    line_set = open3d.geometry.LineSet(
-        points=open3d.utility.Vector3dVector(points_in_world),
-        lines=open3d.utility.Vector2iVector(lines),
-    )
-    line_set.colors = open3d.utility.Vector3dVector(colors)
-
-    # Direction line
-    # Assuming the camera is facing along the negative Z-axis of its local coordinate system
-    direction_vector = R @ np.array([0, 0, 5])
-    direction_points = [t, t + direction_vector]  # Starting from the camera's position
-    direction_lines = [[0, 1]]
-    direction_line_set = open3d.geometry.LineSet(
-        points=open3d.utility.Vector3dVector(direction_points),
-        lines=open3d.utility.Vector2iVector(direction_lines),
-    )
-    direction_line_set.colors = open3d.utility.Vector3dVector([color])  # Use the same color for the direction line
-
-    # direction_vector2 = R @ np.array([0, 0, -5])
-    # direction_points2 = [t, t + direction_vector2]  # Starting from the camera's position
-    # direction_lines2 = [[0, 1]]
-    # direction_line_set2 = open3d.geometry.LineSet(
-    #     points=open3d.utility.Vector3dVector(direction_points2),
-    #     lines=open3d.utility.Vector2iVector(direction_lines2),
-    # )
-    # direction_line_set2.colors = open3d.utility.Vector3dVector([color])  # Use the same color for the direction line
-
-
-    # return as list in Open3D format
-    return [axis, plane, line_set, direction_line_set]
-
-
+        self.__vis.add_geometry("loaded_geometry", geometry)
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description="Visualize COLMAP binary and text models"
-    )
-    parser.add_argument(
-        "--input_model", required=True, help="path to input model folder"
-    )
-    parser.add_argument(
-        "--input_format",
-        choices=[".bin", ".txt"],
-        help="input model format",
-        default="",
-    )
-    parser.add_argument(
-        "--geometry_file",
-        help="path to the PLY or OBJ file to visualize",
-    )
-    args = parser.parse_args()
-    return args
-
+    parser = argparse.ArgumentParser(description="Visualize COLMAP binary and text models")
+    parser.add_argument("--input_model", required=True, help="path to input model folder")
+    parser.add_argument("--input_format", choices=[".bin", ".txt"], help="input model format", default="")
+    parser.add_argument("--geometry_file", help="path to the PLY or OBJ file to visualize")
+    return parser.parse_args()
 
 def main():
     args = parse_args()
 
-    # read COLMAP model
     model = Model()
     model.read_model(args.input_model, ext=args.input_format)
 
@@ -274,18 +175,15 @@ def main():
     print("num_images:", len(model.images))
     print("num_points3D:", len(model.points3D))
 
-    # display using Open3D visualization tools
     model.create_window()
     model.add_points()
     model.add_cameras(scale=0.25)
-    model.add_origin_axes(size=1.0)
 
-    # load and display geometry file (PLY or OBJ)
     if args.geometry_file:
         model.load_geometry(args.geometry_file)
 
     model.show()
-
+    gui.Application.instance.run()
 
 if __name__ == "__main__":
     main()
